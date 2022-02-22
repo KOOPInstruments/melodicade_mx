@@ -1,5 +1,32 @@
-const char version[] = "Build: 22-02-20 16:52";
+const char version[] = "Build: 22-02-22 17:39";
 byte deckType = 1; // Deck type: 0 = No velocity detection, 1 = Dual switch velocity detection
+
+//----------------------------------------------------------------------------//
+//                        -----  Melodicade MX  -----                         //
+//          A portable 6+ octave, velocity sensitive MIDI keyboard            //
+//          using Cherry MX compatible keyswitches arranged in the            //
+//                   Wicki-Hayden isomporphic button layout.                  //
+//                                                                            //
+//                   Copyright (C) 2022 - Michael Koopman                     //
+//                KOOP Instruments (koopinstruments@gmail.com)                //
+//      https://www.koopinstruments.com/instrument-projects/melodicade_mx     //
+//----------------------------------------------------------------------------//
+//                                                                            //
+//   This program is free software: you can redistribute it and/or modify     //
+//   it under the terms of the GNU General Public License as published by     //
+//   the Free Software Foundation, either version 3 of the License, or        //
+//   (at your option) any later version.                                      //
+//                                                                            //
+//   This program is distributed in the hope that it will be useful,          //
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of           //
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            //
+//   GNU General Public License for more details.                             //
+//                                                                            //
+//   You should have received a copy of the GNU General Public License        //
+//   along with this program.  If not, see <https://www.gnu.org/licenses/>.   //
+//                                                                            //
+//----------------------------------------------------------------------------//
+
 
 // To do list
 // Code:  If pitch bend button is pressed with no note button currently engaged, immediately snap to full amount to easier facilitite pre-bends
@@ -20,36 +47,10 @@ byte deckType = 1; // Deck type: 0 = No velocity detection, 1 = Dual switch velo
 // unsigned long programLoopTimer;
 
 
-//----------------------------------------------------------------------------//
-//                        -----  Melodicade MX  -----                         //
-//          A portable 6+ octave, velocity sensitive MIDI keyboard            //
-//          using Cherry MX compatible keyswitches arranged in the            //
-//                   Wicki-Hayden isomprphic button layout.                   //
-//                                                                            //
-//                    Copyright (C) 2022 - Michael Koopman                    //
-//                KOOP Instruments (koopinstruments@gmail.com)                //
-//      https://www.koopinstruments.com/instrument-projects/melodicade_mx     //
-//----------------------------------------------------------------------------//
-//                                                                            //
-//   This program is free software: you can redistribute it and/or modify     //
-//   it under the terms of the GNU General Public License as published by     //
-//   the Free Software Foundation, either version 3 of the License, or        //
-//   (at your option) any later version.                                      //
-//                                                                            //
-//   This program is distributed in the hope that it will be useful,          //
-//   but WITHOUT ANY WARRANTY; without even the implied warranty of           //
-//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            //
-//   GNU General Public License for more details.                             //
-//                                                                            //
-//   You should have received a copy of the GNU General Public License        //
-//   along with this program.  If not, see <https://www.gnu.org/licenses/>.   //
-//                                                                            //
-//----------------------------------------------------------------------------//
-//
 // Microcontroller Information:
 // Teensy 4.1 at 600MHz with USB type MIDI
 // I/O requirments:
-//     44 x Digital
+//     34 x Digital
 //      4 x Analog
 //      2 x I2C
 //      1 x Serial TX
@@ -66,7 +67,7 @@ byte deckType = 1; // Deck type: 0 = No velocity detection, 1 = Dual switch velo
 //   2 x 10K Ohm potentiometers for analog adjustment of velocity and MIDI CC volume
 //   1 x USB-B panel mount jack for power and USB MIDI
 //   1 x 1/4" TS panel mount jack for foot pedal
-//   1 x 3.5mm TRRS panel mount jack for synth audio out
+//   1 x 3.5mm TRS/TRRS panel mount jack for synth audio out
 //   1 x 5-pin DIN female serial MIDI jack
 //
 // Device pinout:
@@ -145,6 +146,8 @@ byte deckType = 1; // Deck type: 0 = No velocity detection, 1 = Dual switch velo
 //     MIDI Channel Up
 //     MIDI Channel Down
 //     --
+//     Rotary encoder button - Hold for 1 second to toggle velocity detection on or off
+//     --
 //     Pitch bend up    (release - 8192 / half pressure - 12287  / full pressure - 16383)
 //     Modulation on    (release - 0 / half pressure - 63     / full pressure - 127)
 //     Pitch bend down  (release - 8192 / half pressure - 4097   / full pressure - 0)
@@ -204,7 +207,7 @@ const byte columnCount = sizeof(keyswitchColumnPins);                           
 // Tact switch column pins
 const byte tactSwitchColumnPins[] = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10};            // Column pins in order from left to right (top perspective)
 
-byte deckScanToggle;                                                            // Variable for bouncing between decks when scanning
+byte deckScanToggle;                                                            // Variable for bouncing between key-switch and tact-switch decks when scanning
 
 // Variables for matrix scanning
 const byte elementCount = columnCount * rowCount;                               // The total number of elements in the matrix
@@ -301,6 +304,7 @@ byte pedalFunction;
 const byte SUSTAIN      = 0;
 const byte LOOPER       = 1;
 const byte MODULATION   = 2;
+const byte SOSTENUTO    = 3;
 
 // Velocity (7-bit message with total range of 0-127)
 byte potVelocity;                                                               // Velocity modifier tied to analog pot input
@@ -315,6 +319,7 @@ const int pitchSpeed = 2048;                                                    
 // Modulation (7-bit message with total range of 0-127)
 byte modOffset;                                                                 // Offset amount for modulation.  modSpeed is added to this each rateLimiterToggle iteration to a max value of 127
 const int modSpeed = 16;                                                        // The amount to increment/decrement modOffset each rateLimiterToggle iteration (must cleanly divide 128)
+
 
 // AutoSus timer
 unsigned long autoSusTimer;
@@ -451,7 +456,7 @@ float mapFloat(float x, float in_min, float in_max, float out_min, float out_max
 }
 
 float waveformAmplitude;                    // Passing velocity level to synth as the amplitude
-byte synthModToggle;
+byte synthModToggle;                        // Synth modulation effect.  Rapidly bounce between pitch and pitch one octave below to create an arp effect
 
 byte waveformPitch[16][8] = {
 {255, 255, 255, 255, 255, 255, 255, 255},   // Default to 255 as an "unused" indicator as it's outside the range of pitch values 0-127
@@ -1067,6 +1072,7 @@ void oledUpdate()
         if (pedalFunction == SUSTAIN)       { oled.print("Sustain"); }
         if (pedalFunction == LOOPER)        { oled.print("Looper "); }
         if (pedalFunction == MODULATION)    { oled.print("Mod CC "); }
+        if (pedalFunction == SOSTENUTO)     { oled.print("Sost CC"); }
     // Line 5 - Tranposition offset
         oled.setCursor(84, 5);
         if (transposeValue[channelMap[channelIndex]] == 0)  { oled.print("---"); }
@@ -1253,7 +1259,7 @@ void digitalButtons()
         if (activeKeyswitches[buttonNumber] == HIGH)                                            // Only scan the bottom tact switch if the associated upper keyswitch is active to increase effeciency
         {
 
-// When running hardwareTest() comment out this block so that the tact-switch values always read true
+// When running hardwareTest() comment out this block so that the tact-switch values always display the correct value, and won't time out
 // /*
             // If the top switch has been active longer than 30000µs, give up on velocity detection and send the lowest desired velocity
             if (activeTactSwitches[buttonNumber] == LOW && micros() - keyswitchActivationTime[buttonNumber] > 30000
@@ -1263,7 +1269,7 @@ void digitalButtons()
                 tactSwitchDebounceTimer[buttonNumber] = millis();                               // Update debounce timer
                 keyswitchActivationTime[buttonNumber] = 0;                                      // Clear velocity calculation timer
                 activeNotes[buttonNumber] = HIGH;                                               // Record an active note
-                noteVelocity[buttonNumber] = constrain(76 - (potVelocity / 2), 0, 127);                            // Record a "Soft" velocity level
+                noteVelocity[buttonNumber] = constrain(78 - (potVelocity / 2), 0, 127);         // Record a "Soft" velocity level.
                 loopInputDetected = HIGH;                                                       // Activate the loopInputDetected variable for looper
             }
 // */
@@ -1287,15 +1293,15 @@ void digitalButtons()
                     else if (buttonTimeDifference >= 30000) { buttonTimeDifference = 30000; }
 
                     // Print values to serial monitor for calibration
-                    Serial.println(buttonTimeDifference);
+                    // Serial.println(buttonTimeDifference);
 
                     // Defining a crude velocity curve
                     // "Slam" velocity
                     if      (buttonTimeDifference >= 1800 && buttonTimeDifference <=  5800) { noteVelocity[buttonNumber] = map(buttonTimeDifference, 1800, 5800, 127, 111) - (potVelocity / 2); }
                     // "Hard" velocity
-                    else if (buttonTimeDifference >= 5801 && buttonTimeDifference <=  26000) { noteVelocity[buttonNumber] = map(buttonTimeDifference, 5801, 26000, 110, 94) - (potVelocity / 2); }
+                    else if (buttonTimeDifference >= 5801 && buttonTimeDifference <=  15000) { noteVelocity[buttonNumber] = map(buttonTimeDifference, 5801, 15000, 110, 95) - (potVelocity / 2); }
                     // "Normal" velocity
-                    else if (buttonTimeDifference >= 26001 && buttonTimeDifference <= 50000) { noteVelocity[buttonNumber] = map(buttonTimeDifference, 26001, 50000, 93, 77) - constrain((potVelocity / 2), 0, 127); }
+                    else if (buttonTimeDifference >= 15001 && buttonTimeDifference <= 30000) { noteVelocity[buttonNumber] = map(buttonTimeDifference, 15001, 30000, 94, 79) - constrain((potVelocity / 2), 0, 127); }
                     // "Soft" velocity (above) is anything longer than our threshold
                 }
 
@@ -1333,6 +1339,7 @@ void footPedal()
         if      (pedalFunction == SUSTAIN)      { controlChange(channelMap[channelIndex], 64, 127); }
         else if (pedalFunction == LOOPER)       { loopButton = HIGH; }
         else if (pedalFunction == MODULATION)   { controlChange(channelMap[channelIndex], 1, 127); }
+        else if (pedalFunction == SOSTENUTO)    { controlChange(channelMap[channelIndex], 66, 127); }
     }
     else if (footPedalButton == LOW && previousFootPedalButton == HIGH)
     {
@@ -1340,6 +1347,7 @@ void footPedal()
         if      (pedalFunction == SUSTAIN)      { controlChange(channelMap[channelIndex], 64, 0); }
         else if (pedalFunction == LOOPER)       { loopButton = LOW; }
         else if (pedalFunction == MODULATION)   { controlChange(channelMap[channelIndex], 1, 0); }
+        else if (pedalFunction == SOSTENUTO)    { controlChange(channelMap[channelIndex], 66, 0); }
     }
 }
 
@@ -1559,6 +1567,7 @@ void rotaryEncoder()
         velocityDisableClock = 4294967295;                                                  // Set velocityDisableClock back to the max value for an unsigned long (49.7 days of milliseconds from power on)
         if (velocityDetectionEnabled == 0)
         {
+            deckType = 1;
             velocityDetectionEnabled = 1;
             // Velocity Detection Enabled Message
             oled.clear();
@@ -1591,6 +1600,7 @@ void rotaryEncoder()
         }
         else if (velocityDetectionEnabled == 1)
         {
+            deckType = 0;
             velocityDetectionEnabled = 0;
             deckScanToggle = LOW;                                                           // Force deckScanToggle LOW in case we were in a scan when this button was hit
             // Velocity Detection Disabled Message
@@ -1754,13 +1764,20 @@ void rotaryEncoder()
                 }
             }
             // Pedal mode selection
-            else if (oledOption == 4 && pedalFunction < MODULATION)
+            else if (oledOption == 4 && pedalFunction < SOSTENUTO)
             {
                 if (pedalFunction == SUSTAIN)                                               // If leaving sustain mode...
                 {
                     for (int i = 0; i < 15; i++)
                     {
                         controlChange(channelMap[i], 64, 0);                                // Disable sustain
+                    }
+                }
+                else if (pedalFunction == MODULATION)                                            // If leaving modulation mode...
+                {
+                    for (int i = 0; i < 15; i++)
+                    {
+                        controlChange(channelMap[i], 1, 0);                                 // Disable modulation
                     }
                 }
                 pedalFunction = pedalFunction + 1;
@@ -1870,6 +1887,13 @@ void rotaryEncoder()
                     for (int i = 0; i < 15; i++)
                     {
                         controlChange(channelMap[i], 1, 0);
+                    }
+                }
+                else if (pedalFunction == SOSTENUTO)
+                {
+                    for (int i = 0; i < 15; i++)
+                    {
+                        controlChange(channelMap[i], 66, 0);
                     }
                 }
                 pedalFunction = pedalFunction - 1;
@@ -2118,6 +2142,8 @@ void digitalMidiCC()
         }
     }
 
+
+    // Synth modulation arp effect
     if (modeSelection == SYNTH && modOffset != 0)
     {
         if (synthModToggle == LOW)
@@ -2137,7 +2163,7 @@ void digitalMidiCC()
             synthModToggle = LOW;
         }
     }
-    else if (modeSelection == SYNTH && synthModToggle == HIGH)
+    else if (modeSelection == SYNTH && synthModToggle == HIGH)              // Reset waveform to correct pitch if modulation button is released
     {
         for (byte myWaveform = 0; myWaveform < 8; myWaveform++)
         {
@@ -2145,6 +2171,8 @@ void digitalMidiCC()
         }
         synthModToggle = LOW;
     }
+
+
 
 
     if (modeSelection == AUTOSUS)
@@ -2393,7 +2421,21 @@ void looper()
                 }
             }
         }
-
+        else if (footPedalButton == HIGH && pedalFunction == SOSTENUTO)
+        {
+            controlChange(channelMap[channelIndex], 66, 127);
+            if (modeSelection == LAYER || modeSelection == SPLIT)
+            {
+                if      (channelIndex % 2 == 0)
+                {
+                    controlChange(channelMap[channelIndex + 1], 66, 127);
+                }
+                else if (channelIndex % 2 == 1)
+                {
+                    controlChange(channelMap[channelIndex - 1], 66, 127);
+                }
+            }
+        }
         oled.setCursor(36, 7);                                                                  // Indicate recording is active
         oled.print("REC");
     }
@@ -2996,43 +3038,17 @@ void controlChange(byte channel, byte control, byte value)
     Serial1.write(control);                                                     // Send control change number to the MIDI serial bus
     Serial1.write(value);                                                       // Send control chnage value to the MIDI serial bus
 
-/*
-    // Apply a modulation effect to the onboard synth waveform
-    if (modeSelection == SYNTH && control == 1) // CC #1 Modulation
-    {
-        for (byte myWaveform = 0; myWaveform < 8; myWaveform++)
-        {
-            if (waveformPitch[synthChannel][myWaveform] != 255)
-            {
-                    // envelopeCh[synthChannel][myWaveform].noteOff();
-                    // envelopeCh[synthChannel][myWaveform].noteOn();
-            }
-        }
-    }
-*/
-
 }
 
 void loopControlChange(byte channel, byte control, byte value)
 {
-    byte synthChannel = channel;
+    // byte synthChannel = channel;
     channel = 0xB0 | channel;                                                   // Bitwise OR outside of the struct to prevent compiler warnings
     midiEventPacket_t event = {0x0B, channel, control, value};                  // Build a struct containing all of our information in a single packet
     MidiUSB.sendMIDI(event);                                                    // Send packet to the MIDI USB bus
     Serial1.write(0xB0 | channel);                                              // Send event type/channel to the MIDI serial bus
     Serial1.write(control);                                                     // Send control change number to the MIDI serial bus
     Serial1.write(value);                                                       // Send control chnage value to the MIDI serial bus
-
-    if (modeSelection == SYNTH && control == 1) // CC #1 Modulation
-    {
-        for (byte myWaveform = 0; myWaveform < 8; myWaveform++)
-        {
-            if (waveformPitch[synthChannel][myWaveform] != 255)
-            {
-                waveformCh[synthChannel][myWaveform].pulseWidth(mapFloat(value, 0, 127, 0.25, 0.5));
-            }
-        }
-    }
 
 }
 
